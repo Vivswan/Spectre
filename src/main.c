@@ -10,10 +10,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "fcntl.h"
-#include "sched.h"
 #include "pthread.h"
 #include "unistd.h"
 #include "inttypes.h"
+
+#include "helper.h"
 
 /********************************************************************
 Victim code.
@@ -58,73 +59,27 @@ Analysis code
 ********************************************************************/
 
 
-/*
- * the code for flushing an address from cache to memory
- * the input is a pointer
- */
-static inline void flush(void *addr) {
-    asm volatile("clflush 0(%0)": : "r" (addr):);
-}
-
-
-/*
- * the code for loading an address and timing the load
- * the output of this function is the time in CPU cycles
- * the input is a pointer
- */
-static inline uint32_t memaccesstime(void *v) {
-    uint32_t rv;
-    asm volatile("mfence\n"
-                 "lfence\n"
-                 "rdtscp\n"
-                 "mov %%eax, %%esi\n"
-                 "mov (%1), %%eax\n"
-                 "rdtscp\n"
-                 "sub %%esi, %%eax\n"
-    : "=&a"(rv)
-    : "r"(v)
-    : "ecx", "edx", "esi");
-    return rv;
-}
-
 
 int main() {
-    int a[1000];
-    for (int i = 0; i < 1000; i++)
+    int N = 1000;
+    int a[N];
+    int time_flush[N];
+    int time_unflush[N];
+    for (int i = 0; i < N; i++)
         a[i] = i;
 
     /*
      * in each iteration, flush, wait, and then reload and time the reload
      */
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < N; i++) {
         flush(&(a[i]));
-        sched_yield();// wait for a while
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        int time = memaccesstime(&(a[i]));
+        wait();
+        time_flush[i] = (int) memaccesstime(&(a[i]));
 
-        printf("flushed %d\n", time);
+        wait();
+        time_unflush[i] = (int) memaccesstime(&(a[i]));
 
+        printf("(flushed, did not flush): (%d, %d)\n", time_flush[i], time_unflush[i]);
     }
 
-    /*
-     * in each iteration, wait, and then reload and time the reload
-     */
-    for (int i = 0; i < 1000; i++) {
-        sched_yield();// wait for a while
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        sched_yield();
-        int time = memaccesstime(&(a[i]));
-
-        printf("did not flush %d\n", time);
-
-    }
 }
