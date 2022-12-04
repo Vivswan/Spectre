@@ -180,7 +180,7 @@ int main() {
 
     int index = 0;
     int *mostProbableValue;
-    char foundSecret[maxStringSize];
+    char foundSecret[maxStringSize + 1];
     const int cacheHitThreshold = getCacheHitThresholdTime(10000, true);
 
     /* Relative address of secret to array1 */
@@ -200,7 +200,7 @@ int main() {
         foundSecret[index + 1] = '\0';
         if (foundSecret[index] == '\0') break;
 
-        printf("Speculatively accessed virtual address: %p ", (void *) (secretRelativeAddress + index));
+        printf("Speculatively accessed virtual address: %p ", (void *) (secret + secretRelativeAddress + index));
         printf("Got secret: %3d = '%c' ", mostProbableValue[0], foundSecret[index]);
         printf("Success Rate: %4d/%d", mostProbableValue[1], num_tries);
         printf("\n");
