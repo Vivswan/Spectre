@@ -1,2 +1,2 @@
-# ECE-2162-Spectre
-Look into "Final Project.pdf"
+# Spectre attack
+Open [objective.pdf](objective.pdf)
